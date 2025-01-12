@@ -5,7 +5,7 @@ import ollama
 def get_current_time() -> str:
     return datetime.now().strftime("%H:%M")
 
-# Llamada al modelo con tools
+# Llamada al modelo con tools en properties van los parametros de la funcion si las usa.
 response = ollama.chat(
     model='qwen2.5',
     messages=[{'role': 'user', 'content': '¿Es la hora de cenar? Ceno de 22:00 a 23:00.'}],
@@ -19,14 +19,15 @@ response = ollama.chat(
     }],
 )
 
-# Si el modelo llama a la función, obtener la hora y generar respuesta
+# Si el modelo llama a la función, obtener la hora y generar respuesta contextualizada.
 if response['message'].get('tool_calls'):
     hora_actual = get_current_time()
     respuesta = ollama.chat(
         model='qwen2.5',
         messages=[
             {'role': 'system', 'content': 'Responde siempre en español.'},
-            {'role': 'user', 'content': f'¿Es la hora de cenar? Ceno de 22:00 a 23:00. La hora actual es {hora_actual}.'},
+            {'role': 'assistant', 'content': f'La hora actual es {hora_actual}'},
+            {'role': 'user', 'content': '¿Es la hora de cenar? Ceno de 22:00 a 23:00 '},
         ],
     )
     print('Respuesta del modelo:', respuesta['message']['content'])
