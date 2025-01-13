@@ -1,55 +1,93 @@
+import os
+import json
 from openai import OpenAI
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
-# Función para obtener la fecha actual en Madrid
-def obtener_fecha_actual():
-    """Obtiene y formatea la fecha actual en Madrid."""
-    # Obtiene la fecha y fecha actual en la zona fecharia de Madrid
-    afecha_madrid = datetime.now(ZoneInfo('Europe/Madrid'))
-    # Formatea la fecha en un formato legible
-    fecha_actual = afecha_madrid.strftime("%Y-%m-%d")
-    print("Fecha actual en Madrid:", fecha_actual)  # Imprime la fecha aquí
-    return fecha_actual
-
-# Definición del esquema de la función para la API (ya no la usaremos directamente para la pregunta)
-funciones = [
-    {
-        "name": "obtener_fecha_actual",
-        "description": "Obtener la fecha actual en Madrid, España",
-        "parameters": {}
-    }
-]
+import gradio as gr
 
 # Inicializar el cliente de OpenAI
-cliente_openai = OpenAI(base_url='http://localhost:11434/v1', api_key='ollama')
+MODEL='qwen2.5'
+openai = OpenAI(base_url='http://localhost:11434/v1', api_key='ollama')
 
-# Inicializar la lista de mensajes para la conversación
-# El mensaje del sistema afecha será dinámico
-mensajes = [
-    {'role': 'system', 'content': ''},  # Dejamos el contenido del sistema vacío inicialmente
-    {'role': 'user', 'content': '¿Cuál es la fecha actual año, mes, dia? y el santo que le corresponde en el santoral.'}
-]
+system_message = "Eres un asistente útil para una aerolínea llamada FlightAI. "
+system_message += "Da respuestas breves y corteses, de no más de una oración. "
+system_message += "Sé siempre preciso. Si no sabes la respuesta, dilo."
 
-# Obtener la fecha antes de iniciar la conversación
-fecha_para_el_sistema = obtener_fecha_actual()
+ticket_prices = {"london": "$799", "paris": "$899", "tokyo": "$1400", "berlin": "$499"}
 
-# Actualizar el mensaje del sistema con la fecha actual
-mensajes[0]['content'] = f'Eres un asistente útil. Hoy es {fecha_para_el_sistema} en Madrid. Si no sabes la respuesta a algo, dilo o pregunta para aclararlo.'
+def get_ticket_price(destination_city):
+    print(f"Tool get_ticket_price called for {destination_city}")
+    return ticket_prices.get(destination_city.lower(), "Unknown")
 
-# Bucle principal de la conversación
-while True:
-    # Realizar la llamada a la API de OpenAI con los mensajes
-    respuesta_api = cliente_openai.chat.completions.create(
-        model='falcon3:10b',
-        messages=mensajes,
-        # Ya no necesitamos 'functions' ni 'function_call' porque no estamos dejando que el modelo llame a la función
-    )
+book_function = {
+    "type": "function",
+    "function": {
+        "name": "book_ticket",
+        "description": "Confirma la reserva de un billete a la ciudad de destino.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "destination_city": {
+                    "type": "string",
+                    "description": "La ciudad a la que el cliente quiere reservar el billete.",
+                },
+            },
+            "required": ["destination_city"],
+        },
+    }
+}
 
-    # Obtener el mensaje de respuesta del asistente
-    mensaje_asistente = respuesta_api.choices[0].message
-    print("Respuesta del asistente:", mensaje_asistente.content)
+price_function = {
+    "type": "function",
+    "function": {
+        "name": "get_ticket_price",
+        "description": "Obtener el precio de un billete de ida y vuelta a la ciudad de destino.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "destination_city": {
+                    "type": "string",
+                    "description": "La ciudad a la que el cliente quiere viajar.",
+                },
+            },
+            "required": ["destination_city"],
+        },
+    }
+}
 
-    # Asumimos que la respuesta del asistente es final en este caso,
-    # ya que hemos proporcionado la fecha en el mensaje del sistema
-    break
+tools = [price_function, book_function]
+
+def chat(message, history):
+    messages = [{"role": "system", "content": system_message}]
+    for human, assistant in history:
+        messages.append({"role": "user", "content": human})
+        messages.append({"role": "assistant", "content": assistant})
+    messages.append({"role": "user", "content": message})
+    response = openai.chat.completions.create(model=MODEL, messages=messages, tools=tools, tool_choice="auto")
+
+    if response.choices[0].finish_reason == "tool_calls":
+        tool_calls = response.choices[0].message.tool_calls
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            arguments = json.loads(tool_call.function.arguments)
+
+            if function_name == "get_ticket_price":
+                city = arguments.get('destination_city')
+                tool_response = get_ticket_price(city)
+            elif function_name == "book_ticket":
+                city = arguments.get('destination_city')
+                # En una aplicación real, aquí iría la lógica para reservar el billete.
+                tool_response = f"El billete a {city} ha sido reservado. Gracias."
+            else:
+                tool_response = f"No se reconoce la función: {function_name}"
+
+            messages.append(response.choices[0].message)
+            messages.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": function_name,
+                "content": tool_response,
+            })
+        response = openai.chat.completions.create(model=MODEL, messages=messages)
+
+    return response.choices[0].message.content
+
+gr.ChatInterface(fn=chat).launch()
