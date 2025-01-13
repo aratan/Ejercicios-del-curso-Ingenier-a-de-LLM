@@ -4,19 +4,25 @@ from openai import OpenAI
 import gradio as gr
 
 # Inicializar el cliente de OpenAI
-MODEL='qwen2.5'
+MODEL = 'qwen2.5'
 openai = OpenAI(base_url='http://localhost:11434/v1', api_key='ollama')
 
-system_message = "Eres un asistente útil para una aerolínea llamada FlightAI. "
-system_message += "Da respuestas breves y corteses, de no más de una oración. "
-system_message += "Sé siempre preciso. Si no sabes la respuesta, dilo."
+# Mensaje del sistema que proporciona el contexto al modelo
+system_message = (
+    "Eres un asistente útil para una aerolínea llamada FlightAI. "
+    "Proporciona respuestas breves y corteses, de no más de una oración. "
+    "Sé siempre preciso. Si no sabes la respuesta, dilo."
+)
 
+# Precios de los billetes según la ciudad
 ticket_prices = {"london": "$799", "paris": "$899", "tokyo": "$1400", "berlin": "$499"}
 
+# Función para obtener el precio de un billete
 def get_ticket_price(destination_city):
     print(f"Tool get_ticket_price called for {destination_city}")
     return ticket_prices.get(destination_city.lower(), "Unknown")
 
+# Definición de la función de reserva
 book_function = {
     "type": "function",
     "function": {
@@ -35,6 +41,7 @@ book_function = {
     }
 }
 
+# Definición de la función de consulta de precios
 price_function = {
     "type": "function",
     "function": {
@@ -53,16 +60,24 @@ price_function = {
     }
 }
 
+# Lista de herramientas disponibles
 tools = [price_function, book_function]
 
+# Función principal del chat que maneja las interacciones
 def chat(message, history):
+    # Construcción del historial de mensajes
     messages = [{"role": "system", "content": system_message}]
-    for human, assistant in history:
-        messages.append({"role": "user", "content": human})
-        messages.append({"role": "assistant", "content": assistant})
+    messages.extend(
+        {"role": role, "content": content}
+        for pair in history
+        for role, content in [("user", pair[0]), ("assistant", pair[1])]
+    )
     messages.append({"role": "user", "content": message})
+
+    # Genera la respuesta del modelo
     response = openai.chat.completions.create(model=MODEL, messages=messages, tools=tools, tool_choice="auto")
 
+    # Procesa las llamadas a herramientas si las hay
     if response.choices[0].finish_reason == "tool_calls":
         tool_calls = response.choices[0].message.tool_calls
         for tool_call in tool_calls:
@@ -74,7 +89,6 @@ def chat(message, history):
                 tool_response = get_ticket_price(city)
             elif function_name == "book_ticket":
                 city = arguments.get('destination_city')
-                # En una aplicación real, aquí iría la lógica para reservar el billete.
                 tool_response = f"El billete a {city} ha sido reservado. Gracias."
             else:
                 tool_response = f"No se reconoce la función: {function_name}"
@@ -86,8 +100,11 @@ def chat(message, history):
                 "name": function_name,
                 "content": tool_response,
             })
+
+        # Nueva interacción con el modelo tras procesar las herramientas
         response = openai.chat.completions.create(model=MODEL, messages=messages)
 
     return response.choices[0].message.content
 
+# Interfaz de Gradio para el chat
 gr.ChatInterface(fn=chat).launch()
